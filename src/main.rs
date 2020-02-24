@@ -1,49 +1,59 @@
-//#![feature(generic_associated_types)]
-
-use bincode;
+use matching_engine::{offers::*, typed_tree::*};
 use sled;
+// use std::sync::atomic::AtomicU64;
 
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let t: sled::Db = sled::open("database.sled")?;
+    // let atomic = AtomicU64::new(0);
+    
+    for v in t.iter() {
+        println!("{:?}", v.unwrap());
+    }
+
+    if false {
+        let kv = KeyVal {
+            key: OfferKey::from(1),
+            val: OfferEvent::Add(OfferValue {
+                side: Side::Buy,
+                security: Security::BTC,
+                price: Some(289),
+                amount: 23,
+            }),
+        };
+
+        t.insert_typed(&kv.key, kv.val)?;
+        let val = t.get_typed(&kv.key);
+        println!("{:?}", val?.unwrap());
+    }
+
+    if false {
+        let offer_val = OfferEvent::Add(OfferValue {
+            side: Side::Sell,
+            security: Security::COP,
+            price: Some(1203),
+            amount: 2000,
+        });
+
+        let (key, _): (OfferKey, Option<_>) = t.insert_monotonic(offer_val)?;
+        println!("{:?}", key);
+        println!("{:?}", u64::from(key));
+    }
+
+    if false {
+        println!("{}", std::str::from_utf8(&t.get("key")?.unwrap())?);
+        println!("{}", t.len());
+        t.insert("key", "value")?;
+        let v = t.get("key")?.unwrap();
+        assert_eq!(v, "value");
+        println!("{}", std::str::from_utf8(&v)?);
+    }
+
+    Ok(())
+}
 
 // where
 //   T: Sized + TryFrom<sled::IVec> + Into<sled::IVec>,
 //   <T as std::convert::TryFrom<sled::IVec>>::Error: Into<sled::Error>,
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-  let t = sled::open("database.sled")?;
-  let mut conf = bincode::config();
-  conf.big_endian();
-  // let kv = KeyVal {
-  //   key: OfferKey(u64::to_be_bytes(0)),
-  //   val: OfferData {
-  //     security: Security::BTC,
-  //     price: 223.0,
-  //     limit: None,
-  //   },
-  // };
-
-  // let k = kv.key;
-  // t.insert_typed(kv);
-  // let val = t.get_typed(k);
-  // println!("{:?}", val?.unwrap());
-
-  println!("{}", std::str::from_utf8(&t.get("key")?.unwrap())?);
-  println!("{}", t.len());
-  // t.insert("key", "value")?;
-  // let v = t.get("key")?.unwrap();
-  // assert_eq!(v, "value");
-  // println!("{}", std::str::from_utf8(&v)?);
-  Ok(())
-}
-
-
-
-
-
-
-
-
-
-
 
 // trait SledSerde {
 //   fn serialize(&self) -> bincode::Result<Vec<u8>>;
