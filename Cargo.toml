@@ -16,3 +16,10 @@ keyed_priority_queue = "0.1.2"
 hdrhistogram = "7.0.0"
 rand = "0.7.3"
 rand_distr = "0.2.2"
+
+[dev-dependencies]
+criterion = "0.3"
+
+[[bench]]
+name = "my_benchmark"
+harness = false
