@@ -20,7 +20,7 @@ impl Offer {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone, Hash)]
 pub struct OfferKey([u8; 8]);
 derive_monotonic_key!(OfferKey);
 

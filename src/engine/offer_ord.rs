@@ -140,6 +140,29 @@ macro_rules! derive_offer_ord {
             }
         }
     };
+    ($traitr: ty, $name: ty, $f: ident, $key: tt, $value:tt) => {
+      impl $traitr for $name { 
+          fn key(&self) -> [u8; 8] {
+              self.$key
+          }
+          fn price(&self) -> Option<i64> {
+              self.$value.price
+          }
+          fn amount(&self) -> u64 {
+              self.$value.amount
+          }
+      }
+      impl std::cmp::PartialEq for $name {
+          fn eq(&self, other: &Self) -> bool {
+              self.$key == other.$key
+          }
+      }
+      impl std::cmp::Ord for $name {
+          fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+              self.$f(other)
+          }
+      }
+  };
 }
 
 pub trait OfferOrdSome {

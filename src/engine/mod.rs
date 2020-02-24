@@ -1,8 +1,9 @@
 pub mod engine_bheap;
 pub mod engine_btree;
+pub mod engine_keyedheap;
 pub mod offer_ord;
 
-use crate::offers::{Offer, Side};
+use crate::offers::{Offer, OfferKey, Side};
 use crossbeam_channel::{self, Receiver, Sender};
 #[derive(Debug)]
 pub enum MatchResult {
@@ -13,8 +14,8 @@ pub enum MatchResult {
 
 #[derive(Debug)]
 pub struct Matches {
-    result: MatchResult,
-    completed: Vec<Offer>,
+    pub result: MatchResult,
+    pub completed: Vec<Offer>,
 }
 
 pub trait EngineDataStruct {
@@ -24,6 +25,7 @@ pub trait EngineDataStruct {
         offer: Offer,
         other: &mut Self,
     ) -> MatchResult;
+    fn delete_key(self, key: &OfferKey) -> Self;
     fn with_capacity(capacity: usize) -> Self;
 }
 
@@ -56,13 +58,27 @@ where
         }
     }
 
-    pub fn start(&mut self) {
+    pub fn start(&mut self, count: usize) {
+        let mut counter = 0;
         while let Ok(offer) = self.receiver.recv() {
             let matches = self.process_offer(offer);
             if let MatchResult::None = matches.result {
                 continue;
             }
             self.sender.send(matches).unwrap();
+            counter += 1;
+            if counter % 10 == 0 {
+                println!("{}", counter);
+            }
+            if count == counter {
+                self.sender
+                    .send(Matches {
+                        completed: Vec::new(),
+                        result: MatchResult::None,
+                    })
+                    .unwrap();
+                return;
+            }
         }
     }
 

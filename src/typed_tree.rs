@@ -41,6 +41,7 @@ where
     sled::IVec: From<<K as KeyOf>::T>,
 {
     fn insert_monotonic(&self, value: <K as KeyOf>::T) -> sled::Result<(K, Option<sled::IVec>)>;
+    fn get_max_key(&mut self) -> sled::Result<Arc<AtomicU64>>;
     fn insert_monotonic_atomic(
         &self,
         atomic: &Arc<AtomicU64>,
@@ -49,6 +50,14 @@ where
         let key = K::from(atomic.fetch_add(1, Ordering::SeqCst));
         self.insert_typed(&key, value).and_then(|v| Ok((key, v)))
     }
+}
+
+use std::convert::TryInto;
+
+fn read_be_u64(input: &mut &[u8]) -> u64 {
+    let (int_bytes, rest) = input.split_at(std::mem::size_of::<u64>());
+    *input = rest;
+    u64::from_be_bytes(int_bytes.try_into().unwrap())
 }
 
 impl<K> MonotonicTypedTree<K> for sled::Db
@@ -61,6 +70,26 @@ where
     fn insert_monotonic(&self, value: <K as KeyOf>::T) -> sled::Result<(K, Option<sled::IVec>)> {
         let key = K::from(self.generate_id()?);
         self.insert(&key, value).and_then(|v| Ok((key, v)))
+    }
+    fn get_max_key(&mut self) -> sled::Result<Arc<AtomicU64>> {
+        if let Some((k, v)) = self.pop_max()? {
+            let count = {
+                let mut b = k.as_ref();
+                if b.len() == 8 {
+                    read_be_u64(&mut b)
+                } else {
+                    panic!()
+                }
+            };
+            self.insert(
+                k.clone(),
+                <K as KeyOf>::T::try_from(v).map_err(|e| e.into())?,
+            )?;
+
+            Ok(Arc::new(AtomicU64::new(count + 1)))
+        } else {
+            Ok(Arc::new(AtomicU64::new(1)))
+        }
     }
 }
 

@@ -1,16 +1,193 @@
 #![feature(binary_heap_drain_sorted)]
 #![feature(binary_heap_into_iter_sorted)]
+#![feature(test)]
 
 pub mod engine;
+pub mod matches;
 pub mod offers;
 pub mod typed_tree;
-pub mod matches;
 mod utils;
 
 #[cfg(test)]
 mod tests {
-    use itchy;
-    use std::collections::{BinaryHeap, HashSet};
+    use itchy::{self, AddOrder};
+    use rand_distr::{Bernoulli, Distribution, Normal};
+    use std::collections::{BinaryHeap, HashMap, HashSet};
+    extern crate test;
+    use crate::{
+        engine::{engine_bheap::BinaryHeapEngine, Engine, Matches},
+        matches::MatchPersistor,
+        offers::{Offer, OfferValue, Security, Side},
+    };
+    use test::Bencher;
+
+
+    #[derive(Debug)]
+    struct Stats {
+        adds: Vec<itchy::AddOrder>,
+        deletes: u32,
+    }
+
+    #[bench]
+    fn bench_18std(b: &mut Bencher) {
+        let normal = Normal::new(200.0, 200.0 * 0.20).unwrap();
+        let bernoulli = Bernoulli::new(0.5).unwrap();
+
+        let normal_p = Normal::new(200.0, 200.0 * 0.01).unwrap();
+        let bernoulli_p = Bernoulli::new(0.1).unwrap();
+
+        let matches_db = sled::open("database-matches.sled").unwrap();
+        let mut rn = rand::thread_rng();
+
+
+        b.iter(|| {
+            let offers: Vec<Offer> = (0..1000).map(|i| {
+                let side = if bernoulli.sample(&mut rn) {
+                    Side::Buy
+                } else {
+                    Side::Sell
+                };
+    
+                let price = if bernoulli_p.sample(&mut rn) {
+                    Some(normal_p.sample(&mut rn) as u64)
+                } else {
+                    None
+                };
+    
+                Offer {
+                    key: u64::to_be_bytes(i).into(),
+                    value: OfferValue {
+                        side,
+                        security: Security::BTC,
+                        amount: normal.sample(&mut rn) as u64,
+                        price,
+                    },
+                }
+            }).collect();
+
+            let (sender_offer, receiver_offer) = crossbeam_channel::unbounded::<Offer>();
+            let (sender_matches, receiver_matches) = crossbeam_channel::unbounded::<Matches>();
+
+            let mut engine = Engine::<BinaryHeapEngine>::new(receiver_offer, sender_matches);
+            let offers_len = offers.len();
+            let engine_id = std::thread::spawn(move || {
+                engine.start(offers_len);
+            });
+
+            let mut persistor = MatchPersistor::new(receiver_matches, matches_db.clone());
+            let persistence_id = std::thread::spawn(move || {
+                persistor.start();
+            });
+
+            for o in offers.into_iter() { 
+                sender_offer.send(o).unwrap();
+            }
+
+            engine_id.join().unwrap();
+            persistence_id.join().unwrap();
+        });
+    }
+
+    #[test]
+    fn itch50_parser3() {
+        let stream = itchy::MessageStream::from_file(
+            r#"C:\Users\jmanu\Downloads\20200130.BX_ITCH_50\20200130.BX_ITCH_50"#,
+        )
+        .unwrap();
+        let mut map = HashMap::<String, Stats>::default();
+        let mut map_stock = HashMap::<u64, String>::default();
+
+        for msg in stream.filter(|v| {
+            if let Ok(v) = v.as_ref() {
+                v.tag == 65 || v.tag == 85 || v.tag == 68
+            } else {
+                false
+            }
+        }) {
+            let msg = msg.unwrap();
+            match msg.body {
+                itchy::Body::AddOrder(o) => {
+                    map_stock.insert(o.reference, String::from(o.stock.as_str()));
+                    let entry = map.entry(String::from(o.stock.as_str()));
+                    entry
+                        .and_modify(|v| {
+                            v.adds.push(o);
+                        })
+                        .or_insert(Stats {
+                            adds: Vec::new(),
+                            deletes: 0,
+                        });
+                }
+                itchy::Body::DeleteOrder { reference } => {
+                    let o = map_stock.get(&reference);
+                    if let Some(o) = o {
+                        let o = map.get_mut(o).unwrap();
+                        o.deletes += 1;
+                    }
+                }
+                itchy::Body::ReplaceOrder(_) => {}
+                _ => unreachable!(),
+            }
+        }
+        println!("{:?}", map.len());
+        let mut stds = Vec::new();
+        let mut stds_prices = Vec::new();
+        for (k, v) in map.into_iter().filter(|(_, v)| v.adds.len() > 10) {
+            let prices: Vec<f64> = v
+                .adds
+                .iter()
+                .map::<f64, _>(|a: &AddOrder| {
+                    let v: u32 = unsafe { std::mem::transmute(a.price) };
+                    f64::from(v) / 10_000.0
+                })
+                .collect();
+
+            let (min, mean, max, std) = min_max_std(&k, &prices);
+
+            stds_prices.push(std / mean);
+
+            let (min, mean, max, std) =
+                min_max_std(&k, &v.adds.iter().map(|v| v.shares as f64).collect());
+            stds.push(std / mean);
+        }
+        min_max_std("AMOUNTS: ", &stds);
+        min_max_std("PRICES: ", &stds_prices);
+    }
+
+    fn min_max_std(k: &str, arr: &Vec<f64>) -> (f64, f64, f64, f64) {
+        let size = arr.len() as f64;
+        let mean = arr.iter().sum::<f64>() / size;
+        let (min, max, mut std) = arr.iter().fold(
+            (std::f64::MAX, std::f64::MIN, 0 as f64),
+            |(min, max, std), v| {
+                (
+                    if min < *v { min } else { *v },
+                    if max > *v { max } else { *v },
+                    std + (*v as f64 - mean).powi(2),
+                )
+            },
+        );
+        std /= size;
+        std = std.powf(0.5);
+        println!(
+            "{}: Prices  len {} -- min {} -- mean {} -- max {} -- std {}",
+            k,
+            arr.len(),
+            min,
+            mean,
+            max,
+            std
+        );
+        (min, mean, max, std)
+    }
+
+    #[test]
+    fn transmute_test() {
+        let p = 67_899_000;
+        let val = itchy::Price4::from(p);
+        let val2: u32 = unsafe { std::mem::transmute(val) };
+        assert_eq!(val2, p);
+    }
 
     #[test]
     fn b_heap() {

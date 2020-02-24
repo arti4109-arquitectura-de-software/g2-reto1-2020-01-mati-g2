@@ -3,34 +3,27 @@ use crate::{
     engine::{EngineDataStruct, MatchResult},
     offers::{Offer, OfferKey, Side},
 };
-use std::collections::BinaryHeap;
+use keyed_priority_queue::KeyedPriorityQueue;
 
 #[derive(Eq, PartialOrd, Clone, Debug)]
-pub struct EngineOfferBH {
+pub struct EngineOfferKBH {
     price: Option<i64>,
     key: [u8; 8],
     amount: u64,
 }
-derive_offer_ord!(OfferOrdSigned, EngineOfferBH, cmp_max);
+derive_offer_ord!(OfferOrdSigned, EngineOfferKBH, cmp_max);
 
-pub type BinaryHeapEngine = BinaryHeap<EngineOfferBH>;
+pub type KeyedBinaryHeapEngine = KeyedPriorityQueue<OfferKey, EngineOfferKBH>;
 
-impl EngineDataStruct for BinaryHeapEngine {
-    fn delete_key(self, key: &OfferKey) -> Self {
-        let mut index = self.len();
-        for (i, item) in self.iter().enumerate() {
-            if item.key == key.as_ref() {
-                index = i;
-                break;
-            }
-        }
-        if index != self.len() {
-            let mut arr = self.into_vec();
-            arr.remove(index);
-            Self::from(arr)
-        } else {
-            self
-        }
+// impl BinaryHeapEngine {
+//     fn delete_key(&mut self) {
+//         self.re
+//     }
+// }
+impl EngineDataStruct for KeyedBinaryHeapEngine {
+    fn delete_key(mut self, key: &OfferKey) -> Self {
+      self.remove_item(key);
+      self
     }
 
     fn with_capacity(capacity: usize) -> Self {
@@ -57,16 +50,17 @@ impl EngineDataStruct for BinaryHeapEngine {
                 Side::Sell => -(price as i64),
             };
 
-            while let Some(o) = self.peek() {
+            while let Some((_, o)) = self.peek() {
                 if let Some(p) = o.price {
                     if price > p {
                         break;
                     }
                 }
-
+                let (k, mut o) = self.pop().unwrap();
                 if o.amount > excedent {
                     let new_offer = o.into_offer(opposite_side, offer.value.security);
-                    self.peek_mut().unwrap().amount -= excedent;
+                    o.amount -= excedent;
+                    self.push(k, o);
 
                     return MatchResult::Partial {
                         offer: new_offer,
@@ -74,7 +68,6 @@ impl EngineDataStruct for BinaryHeapEngine {
                     };
                 }
 
-                let o = self.pop().unwrap();
                 matches.push(o.into_offer(opposite_side, offer.value.security));
                 if o.amount == excedent {
                     return MatchResult::Complete;
@@ -83,10 +76,11 @@ impl EngineDataStruct for BinaryHeapEngine {
                 }
             }
         } else {
-            while let Some(o) = self.peek() {
+            while let Some((k, mut o)) = self.pop() {
                 if o.amount > excedent {
                     let new_offer = o.into_offer(opposite_side, offer.value.security);
-                    self.peek_mut().unwrap().amount -= excedent;
+                    o.amount -= excedent;
+                    self.push(k, o);
 
                     return MatchResult::Partial {
                         offer: new_offer,
@@ -94,10 +88,8 @@ impl EngineDataStruct for BinaryHeapEngine {
                     };
                 }
 
-                let o = self.pop().unwrap();
                 matches.push(o.into_offer(opposite_side, offer.value.security));
                 if o.amount == excedent {
-                    matches.push(offer.into());
                     return MatchResult::Complete;
                 } else {
                     excedent -= o.amount;
@@ -105,12 +97,12 @@ impl EngineDataStruct for BinaryHeapEngine {
             }
         }
 
-        let new_offer = EngineOfferBH {
-            price: EngineOfferBH::price_from_offer(&offer),
+        let new_offer = EngineOfferKBH {
+            price: EngineOfferKBH::price_from_offer(&offer),
             amount: excedent,
             key: *offer.key.as_ref(),
         };
-        other.push(new_offer);
+        other.push(offer.key.clone(), new_offer);
 
         if offer.value.amount == excedent {
             MatchResult::None
@@ -136,7 +128,7 @@ mod tests {
     fn engine_test() {
         let (_sender_offer, receiver_offer) = crossbeam_channel::unbounded::<Offer>();
         let (sender_matches, _receiver_matches) = crossbeam_channel::unbounded::<Matches>();
-        let mut engine = Engine::<BinaryHeapEngine>::new(receiver_offer, sender_matches);
+        let mut engine = Engine::<KeyedBinaryHeapEngine>::new(receiver_offer, sender_matches);
         let offer = Offer {
             key: u64::to_be_bytes(0).into(),
             value: OfferValue {
@@ -184,64 +176,3 @@ mod tests {
         println!("{:?}", matches);
     }
 }
-
-// impl OfferOrdSigned for EngineOfferBH {
-//     fn key(&self) -> u64 {
-//         self.key
-//     }
-//     fn price(&self) -> Option<i64> {
-//         self.price
-//     }
-//     fn amount(&self) -> u64 {
-//         self.amount
-//     }
-// }
-// impl cmp::PartialEq for EngineOfferBH {
-//     fn eq(&self, other: &Self) -> bool {
-//         self.key == other.key
-//     }
-// }
-// impl cmp::Ord for EngineOfferBH {
-//     fn cmp(&self, other: &Self) -> cmp::Ordering {
-//         self.cmp_max(other)
-//     }
-// }
-
-// impl MatchResult {
-//     fn get_completed(&self) -> &Vec<EngineOffer> {
-//         match self {
-//             MatchResult::Complete(completed) => completed,
-//             MatchResult::Partial(completed, _partial) => completed,
-//             MatchResult::PartialSame(completed, _excedente) => completed,
-//         }
-//     }
-// }
-// fn lower(price: f64) -> Self {
-//     let price = f64_to_u64(price);
-//     EngineOffer {
-//         price,
-//         key: 0,
-//         amount: 0,
-//     }
-// }
-
-// fn upper(price: f64) -> Self {
-//     let price = f64_to_u64(price);
-//     EngineOffer {
-//         price,
-//         key: std::u64::MAX,
-//         amount: std::u64::MAX,
-//     }
-// }
-// fn get_offers(&mut self, is_buy_offer: bool) -> (&mut Offers, &mut Offers) {
-//     if is_buy_offer {
-//         (&mut self.buy_offers, &mut self.sell_offers)
-//     } else {
-//         (&mut self.sell_offers, &mut self.buy_offers)
-//     }
-// }
-// let match_result = if is_buy_offer {
-//     self.match_offer(&offer, opposite_offers.range(range))
-// } else {
-//     self.match_offer(&offer, opposite_offers.range(range).rev())
-// };

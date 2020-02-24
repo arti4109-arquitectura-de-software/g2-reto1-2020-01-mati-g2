@@ -1,7 +1,9 @@
 const F64_TO_U64_FACTOR: f64 = 10_000.0;
+#[allow(dead_code)]
 pub fn f64_to_u64(price: f64) -> u64 {
     (price * F64_TO_U64_FACTOR) as u64
 }
+#[allow(dead_code)]
 pub fn f64_to_i64(price: f64) -> i64 {
     (price * F64_TO_U64_FACTOR) as i64
 }
