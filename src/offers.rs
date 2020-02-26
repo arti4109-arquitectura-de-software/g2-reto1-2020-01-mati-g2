@@ -31,6 +31,12 @@ pub enum OfferEvent {
 }
 
 #[derive(Deserialize, Serialize, Debug)]
+pub enum OfferEventKeyed {
+    Delete(OfferKey, OfferKey),
+    Add(OfferKey, OfferValue),
+}
+
+#[derive(Deserialize, Serialize, Debug)]
 pub struct OfferValue {
     pub security: Security,
     pub side: Side,

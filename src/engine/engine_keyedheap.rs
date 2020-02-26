@@ -21,9 +21,11 @@ pub type KeyedBinaryHeapEngine = KeyedPriorityQueue<OfferKey, EngineOfferKBH>;
 //     }
 // }
 impl EngineDataStruct for KeyedBinaryHeapEngine {
-    fn delete_key(mut self, key: &OfferKey) -> Self {
-      self.remove_item(key);
-      self
+    fn delete_key(&mut self, key: &OfferKey) -> bool {
+      match self.remove_item(key){
+          Some(_) => true,
+          None => false
+      }
     }
 
     fn with_capacity(capacity: usize) -> Self {
@@ -121,12 +123,12 @@ mod tests {
     use super::*;
     use crate::{
         engine::{Engine, Matches},
-        offers::{Offer, OfferValue, Security, Side},
+        offers::{Offer, OfferEventKeyed, OfferValue, Security, Side},
     };
 
     #[test]
     fn engine_test() {
-        let (_sender_offer, receiver_offer) = crossbeam_channel::unbounded::<Offer>();
+        let (_sender_offer, receiver_offer) = crossbeam_channel::unbounded::<OfferEventKeyed>();
         let (sender_matches, _receiver_matches) = crossbeam_channel::unbounded::<Matches>();
         let mut engine = Engine::<KeyedBinaryHeapEngine>::new(receiver_offer, sender_matches);
         let offer = Offer {

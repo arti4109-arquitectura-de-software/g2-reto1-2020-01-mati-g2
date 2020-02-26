@@ -46,7 +46,6 @@ use crossbeam_channel::{self, Receiver};
 pub struct MatchPersistor {
     receiver: Receiver<Matches>,
     db: sled::Db,
-    buffer: Vec<MatchValue>,
     atomic: Arc<AtomicU64>,
 }
 
@@ -57,7 +56,6 @@ impl MatchPersistor {
         MatchPersistor {
             receiver,
             db,
-            buffer: Vec::new(),
             atomic,
         }
     }
@@ -67,25 +65,28 @@ impl MatchPersistor {
             if let MatchResult::None = matches.result {
                 return;
             }
+            counter += 1;
+            if counter % 50 == 0 {
+                println!("Persistor: {}", counter);
+            }
+
             if let MatchResult::Partial {
                 mut offer,
                 to_substract,
             } = matches.result
             {
                 offer.value.amount -= to_substract;
-                self.buffer.push(offer.into());
+                self.db.insert_monotonic_atomic(&self.atomic, offer.into()).unwrap() as (MatchKey, Option<_>);
             }
-            counter += 1;
-            if counter % 10 == 0 {
-                println!("{}", counter);
-            }
-
-            self.buffer
-                .extend(matches.completed.into_iter().map(|o| o.into()));
-            for m in self.buffer.drain(..self.buffer.len()) {
+            
+            for m in matches.completed.into_iter().map(|o| o.into()) {
                 self.db.insert_monotonic_atomic(&self.atomic, m).unwrap() as (MatchKey, Option<_>);
             }
         }
+    }
+
+    pub fn persistir(&self, m: MatchValue) {
+        self.db.insert_monotonic_atomic(&self.atomic, m).unwrap() as (MatchKey, Option<_>);
     }
 }
 

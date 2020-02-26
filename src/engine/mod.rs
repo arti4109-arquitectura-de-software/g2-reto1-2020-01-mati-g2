@@ -3,7 +3,7 @@ pub mod engine_btree;
 pub mod engine_keyedheap;
 pub mod offer_ord;
 
-use crate::offers::{Offer, OfferKey, Side};
+use crate::offers::{Offer, OfferEvent, OfferEventKeyed, OfferKey, Side};
 use crossbeam_channel::{self, Receiver, Sender};
 #[derive(Debug)]
 pub enum MatchResult {
@@ -18,14 +18,14 @@ pub struct Matches {
     pub completed: Vec<Offer>,
 }
 
-pub trait EngineDataStruct {
+pub trait EngineDataStruct : Sized{
     fn match_offer(
         &mut self,
         matches: &mut Vec<Offer>,
         offer: Offer,
         other: &mut Self,
     ) -> MatchResult;
-    fn delete_key(self, key: &OfferKey) -> Self;
+    fn delete_key(&mut self, key: &OfferKey) ->  bool;
     fn with_capacity(capacity: usize) -> Self;
 }
 
@@ -38,7 +38,7 @@ where
     buy_offers: T,
     // market_buy_offers: Vec<MarketEngineOffer>,
     matches: Vec<Offer>,
-    receiver: Receiver<Offer>,
+    receiver: Receiver<OfferEventKeyed>,
     sender: Sender<Matches>,
 }
 
@@ -46,7 +46,7 @@ impl<T> Engine<T>
 where
     T: EngineDataStruct,
 {
-    pub fn new(receiver: Receiver<Offer>, sender: Sender<Matches>) -> Self {
+    pub fn new(receiver: Receiver<OfferEventKeyed>, sender: Sender<Matches>) -> Self {
         Engine {
             sell_offers: T::with_capacity(24),
             // market_sell_offers: Vec::with_capacity(24),
@@ -58,27 +58,40 @@ where
         }
     }
 
-    pub fn start(&mut self, count: usize) {
+    pub fn start(&mut self, count : usize) {
         let mut counter = 0;
         while let Ok(offer) = self.receiver.recv() {
-            let matches = self.process_offer(offer);
-            if let MatchResult::None = matches.result {
-                continue;
+            match offer{
+                OfferEventKeyed::Add(key, value)=>{
+                    let offer = Offer{
+                        key,
+                        value
+                    };
+                    let matches = self.process_offer(offer);
+                    if let MatchResult::None = matches.result {
+                        println!("{}", counter);
+                        continue;
+                    }
+                    self.sender.send(matches).unwrap();
+                    counter += 1;
+                    if counter % 50 == 0 {
+                        println!("{}", counter);
+                    }
+                    if count == counter {
+                        self.sender
+                            .send(Matches {
+                                completed: Vec::new(),
+                                result: MatchResult::None,
+                            })
+                            .unwrap();
+                        return;
+                    }
+                },
+                OfferEventKeyed::Delete(_, k)=>{
+                    self.delete_offer(&k);
+                }
             }
-            self.sender.send(matches).unwrap();
-            counter += 1;
-            if counter % 10 == 0 {
-                println!("{}", counter);
-            }
-            if count == counter {
-                self.sender
-                    .send(Matches {
-                        completed: Vec::new(),
-                        result: MatchResult::None,
-                    })
-                    .unwrap();
-                return;
-            }
+            
         }
     }
 
@@ -91,6 +104,10 @@ where
         let result = opposite_offers.match_offer(&mut self.matches, offer, same_offers);
         let completed: Vec<_> = self.matches.drain(..self.matches.len()).collect();
         Matches { completed, result }
+    }
+
+    pub fn delete_offer(&mut self, key: &OfferKey){
+        let c = self.buy_offers.delete_key(key);
     }
 }
 
